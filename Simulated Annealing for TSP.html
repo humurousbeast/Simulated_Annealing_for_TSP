@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulated Annealing for the Traveling Salesman Problem</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ccc;--panel:#f6f6f6;--tour:#3d5a80;--ok:#2a9d4a;--bad:#d62828;--rem:#999;--best:#e08a00;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17181a;--fg:#e8e8e8;--mute:#9a9a9a;--line:#3a3b3e;--panel:#222326;--tour:#7aa2d6;--ok:#4cc46c;--bad:#ff6b6b;--rem:#777;--best:#ffb340}}
+:root[data-theme="dark"]{--bg:#17181a;--fg:#e8e8e8;--mute:#9a9a9a;--line:#3a3b3e;--panel:#222326;--tour:#7aa2d6;--ok:#4cc46c;--bad:#ff6b6b;--rem:#777;--best:#ffb340}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:18px 16px 40px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:26px 0 6px}
+p{margin:6px 0;max-width:80ch}
+.sub{color:var(--mute);margin-bottom:14px}
+.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+canvas{width:100%;display:block;background:var(--panel);border:1px solid var(--line);border-radius:4px}
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:10px 0}
+.controls label{display:flex;align-items:center;gap:6px;font-size:14px}
+button{font:inherit;padding:5px 12px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:4px;cursor:pointer}
+button:hover{border-color:var(--mute)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:8px 0}
+.stats div{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font-size:13px}
+.stats b{display:block;font-size:16px;font-variant-numeric:tabular-nums}
+#move{min-height:3em;padding:6px 8px;border:1px solid var(--line);border-radius:4px;font-size:14px;font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--mute);margin:6px 0}
+.sw{display:inline-block;width:22px;height:0;border-top:3px solid;vertical-align:middle;margin-right:5px}
+.gt{font-size:13px;color:var(--mute);margin:10px 0 3px}
+code{background:var(--panel);padding:1px 5px;border-radius:3px}
+.theory{max-width:80ch}
+</style>
+</head>
+<body>
+<main>
+<h1>Simulated Annealing for the Traveling Salesman Problem</h1>
+<p class="sub">The tour starts as a random order of cities. Each step proposes a random 2-opt swap, and the algorithm accepts or rejects it based on the current temperature.</p>
+
+<div class="grid">
+  <div>
+    <canvas id="map" width="640" height="440"></canvas>
+    <div class="legend">
+      <span><span class="sw" style="border-color:var(--tour)"></span>current tour</span>
+      <span><span class="sw" style="border-color:var(--ok)"></span>new edges (accepted)</span>
+      <span><span class="sw" style="border-color:var(--bad);border-top-style:dashed"></span>proposed edges (rejected)</span>
+      <span><span class="sw" style="border-color:var(--rem);border-top-style:dashed"></span>removed edges</span>
+    </div>
+    <div class="controls">
+      <button id="start">Start</button>
+      <button id="step">Step</button>
+      <button id="reset">Restart same cities</button>
+      <button id="newc">New cities</button>
+    </div>
+    <div class="controls">
+      <label>Cities <input type="range" id="n" min="8" max="80" value="30"><span id="nv">30</span></label>
+      <label>Cooling rate <input type="range" id="alpha" min="0.995" max="0.9995" step="0.0001" value="0.9990"><span id="av">0.9990</span></label>
+      <label>Speed <input type="range" id="speed" min="1" max="200" value="5"><span id="sv">5</span> steps/frame</label>
+    </div>
+  </div>
+  <div>
+    <div class="stats">
+      <div>Iteration<b id="sIt">0</b></div>
+      <div>Temperature<b id="sT">-</b></div>
+      <div>Current length<b id="sL">-</b></div>
+      <div>Best length<b id="sB">-</b></div>
+      <div>Accepted<b id="sA">0</b></div>
+      <div>Rejected<b id="sR">0</b></div>
+      <div>Accepted worse moves<b id="sU">0</b></div>
+      <div>Status<b id="sS">Ready</b></div>
+    </div>
+    <div class="gt">Last move</div>
+    <div id="move">Press Start or Step.</div>
+    <div class="gt">Temperature vs. iteration</div>
+    <canvas id="gT" width="440" height="180"></canvas>
+    <div class="gt">Tour length vs. iteration (<span style="color:var(--tour)">current</span>, <span style="color:var(--best)">best</span>)</div>
+    <canvas id="gL" width="440" height="180"></canvas>
+  </div>
+</div>
+
+<h2>Theory</h2>
+<div class="theory">
+<p><b>Traveling Salesman Problem (TSP).</b> Given n cities, find the shortest closed route that visits every city exactly once and returns to the start. There are (n−1)!/2 possible tours, so checking all of them is impossible for even moderate n. TSP is NP-hard, so heuristics are used to find good (not always optimal) tours.</p>
+<p><b>Simulated annealing (SA).</b> SA is inspired by annealing in metallurgy: a metal is heated and then cooled slowly so its atoms settle into a low-energy state. Here, the “energy” is the tour length and the “temperature” T controls how willing the search is to accept worse tours.</p>
+<p><b>Algorithm.</b></p>
+<ol>
+<li>Start with a random tour and a high temperature T.</li>
+<li>Propose a neighbour: pick two random positions i &lt; j and reverse the tour between them (a 2-opt swap). This removes two edges and adds two new ones.</li>
+<li>Compute Δ = new length − old length.</li>
+<li>If Δ &lt; 0 (shorter), accept. Otherwise accept with probability <code>p = e<sup>−Δ/T</sup></code>, by comparing p with a random number r in [0, 1): accept if r &lt; p.</li>
+<li>Cool down: <code>T ← α · T</code> with α slightly below 1. Repeat from step 2 until T is very small.</li>
+</ol>
+<p><b>Why it works.</b> At high T, p is close to 1 even for bad moves, so the search explores widely and can escape local minima (the tour length graph is noisy and goes up and down). As T falls, bad moves are accepted less and less, and the search behaves like a plain downhill search that settles into a short tour. A slower cooling rate (α closer to 1) usually gives a better tour but takes more iterations.</p>
+</div>
+</main>
+
+<script>
+(function(){
+var W=640,H=440,T0=500,TMIN=0.1;
+var $=function(id){return document.getElementById(id)};
+var map=$('map'),mc=map.getContext('2d'),gT=$('gT'),gL=$('gL');
+var cities=[],tour=[],best=[],cur=0,bestLen=0,T=T0,it=0,acc=0,rej=0,upw=0,last=null;
+var hT=[],hC=[],hB=[],stride=1,running=false,done=false,alpha=0.999;
+
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function d(a,b){var p=cities[a],q=cities[b];return Math.hypot(p[0]-q[0],p[1]-q[1])}
+function tourLen(t){var s=0;for(var i=0;i<t.length;i++)s+=d(t[i],t[(i+1)%t.length]);return s}
+
+function makeCities(){
+  var n=+$('n').value;cities=[];
+  for(var i=0;i<n;i++)cities.push([30+Math.random()*(W-60),30+Math.random()*(H-60)]);
+  restart();
+}
+function restart(){
+  var n=cities.length;tour=[];for(var i=0;i<n;i++)tour.push(i);
+  for(i=n-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=tour[i];tour[i]=tour[j];tour[j]=t}
+  cur=tourLen(tour);best=tour.slice();bestLen=cur;T=T0;it=0;acc=rej=upw=0;last=null;
+  hT=[T];hC=[cur];hB=[bestLen];stride=1;done=false;running=false;$('start').textContent='Start';
+  $('move').textContent='Press Start or Step.';
+  render();
+}
+
+function step(){
+  var n=tour.length;
+  var i=1+Math.floor(Math.random()*(n-1)),j=1+Math.floor(Math.random()*(n-1));
+  if(i===j){j=i<n-1?i+1:i-1}
+  if(i>j){var t=i;i=j;j=t}
+  var a=tour[i-1],b=tour[i],c=tour[j],e=tour[(j+1)%n];
+  var delta=d(a,c)+d(b,e)-d(a,b)-d(c,e);
+  var p=delta<0?1:Math.exp(-delta/T),r=Math.random(),ok=delta<0||r<p;
+  if(ok){
+    for(var lo=i,hi=j;lo<hi;lo++,hi--){var x=tour[lo];tour[lo]=tour[hi];tour[hi]=x}
+    cur+=delta;acc++;if(delta>0)upw++;
+    if(cur<bestLen-1e-9){bestLen=cur;best=tour.slice()}
+  }else rej++;
+  last={a:a,b:b,c:c,e:e,delta:delta,p:p,r:r,ok:ok,i:i,j:j,T:T};
+  it++;T*=alpha;
+  if(it%stride===0){hT.push(T);hC.push(cur);hB.push(bestLen);
+    if(hT.length>800){hT=hT.filter(function(_,k){return k%2===0});hC=hC.filter(function(_,k){return k%2===0});hB=hB.filter(function(_,k){return k%2===0});stride*=2}}
+  if(T<TMIN){finish()}
+}
+function finish(){
+  done=true;running=false;$('start').textContent='Start';
+  tour=best.slice();cur=bestLen;last=null;hT.push(T);hC.push(cur);hB.push(bestLen);
+  $('move').textContent='Finished: temperature reached the minimum. The best tour found is shown.';
+}
+
+function line(p,q,col,w,dash){
+  mc.beginPath();mc.setLineDash(dash||[]);mc.strokeStyle=col;mc.lineWidth=w;
+  mc.moveTo(cities[p][0],cities[p][1]);mc.lineTo(cities[q][0],cities[q][1]);mc.stroke();mc.setLineDash([]);
+}
+function drawMap(){
+  mc.clearRect(0,0,W,H);
+  var n=tour.length,col=css('--tour'),ok=css('--ok'),bad=css('--bad'),rem=css('--rem');
+  var m=last&&last.ok?[[last.a,last.c],[last.b,last.e]]:null;
+  for(var k=0;k<n;k++){
+    var p=tour[k],q=tour[(k+1)%n];
+    var isNew=m&&m.some(function(z){return (z[0]===p&&z[1]===q)||(z[0]===q&&z[1]===p)});
+    if(!isNew)line(p,q,col,1.6);
+  }
+  if(last){
+    if(last.ok){
+      line(last.a,last.b,rem,1.5,[5,4]);line(last.c,last.e,rem,1.5,[5,4]);
+      line(last.a,last.c,ok,3);line(last.b,last.e,ok,3);
+    }else{
+      line(last.a,last.c,bad,2.5,[6,4]);line(last.b,last.e,bad,2.5,[6,4]);
+    }
+  }
+  mc.fillStyle=css('--fg');
+  cities.forEach(function(c,k){mc.beginPath();mc.arc(c[0],c[1],4,0,7);mc.fill()});
+  if(last){[last.a,last.b,last.c,last.e].forEach(function(k){mc.beginPath();mc.arc(cities[k][0],cities[k][1],6.5,0,7);mc.strokeStyle=last.ok?ok:bad;mc.lineWidth=2;mc.stroke()})}
+  var s=cities[tour[0]];mc.fillStyle=css('--best');mc.beginPath();mc.arc(s[0],s[1],6,0,7);mc.fill();
+}
+
+function graph(cv,series,colors,logy,ymaxFix){
+  var c=cv.getContext('2d'),w=cv.width,h=cv.height,L=46,B=18,Tp=8,R=8;
+  c.clearRect(0,0,w,h);
+  var all=[].concat.apply([],series),mn=Math.min.apply(null,all),mx=Math.max.apply(null,all);
+  if(ymaxFix!==undefined){mn=0;mx=ymaxFix}
+  if(mx-mn<1e-9)mx=mn+1;
+  var N=series[0].length,tot=Math.max(N,2);
+  c.strokeStyle=css('--line');c.lineWidth=1;c.strokeRect(L,Tp,w-L-R,h-Tp-B);
+  c.fillStyle=css('--mute');c.font='11px system-ui,sans-serif';c.textAlign='right';
+  c.fillText(mx.toFixed(mx<10?2:0),L-4,Tp+9);c.fillText(mn.toFixed(mn<10?2:0),L-4,h-B);
+  c.textAlign='left';c.fillText('0',L,h-4);c.textAlign='right';c.fillText('iteration '+it,w-R,h-4);
+  series.forEach(function(s,si){
+    c.beginPath();c.strokeStyle=colors[si];c.lineWidth=1.6;
+    s.forEach(function(v,k){var x=L+(k/(tot-1))*(w-L-R),y=h-B-((v-mn)/(mx-mn))*(h-Tp-B);k?c.lineTo(x,y):c.moveTo(x,y)});
+    c.stroke();
+  });
+}
+
+function stats(){
+  $('sIt').textContent=it;$('sT').textContent=T.toFixed(2);$('sL').textContent=cur.toFixed(1);
+  $('sB').textContent=bestLen.toFixed(1);$('sA').textContent=acc;$('sR').textContent=rej;$('sU').textContent=upw;
+  $('sS').textContent=done?'Finished':(running?'Running':'Paused');
+  if(last){
+    var l=last,sign=l.delta>=0?'+':'';
+    var txt='Swap positions '+l.i+' and '+l.j+' (reverse segment). Δ = '+sign+l.delta.toFixed(1)+'. ';
+    if(l.delta<0)txt+='Shorter, so always accepted.';
+    else txt+='p = e^(−Δ/T) = '+l.p.toFixed(3)+', random r = '+l.r.toFixed(3)+' → '+(l.ok?'r &lt; p, accepted (worse move)':'r ≥ p, rejected');
+    $('move').innerHTML='<span style="color:'+(l.ok?css('--ok'):css('--bad'))+'"><b>'+(l.ok?'ACCEPTED':'REJECTED')+'</b></span> &nbsp;'+txt;
+  }
+}
+function render(){drawMap();graph(gT,[hT],[css('--bad')],false,T0);graph(gL,[hC,hB],[css('--tour'),css('--best')]);stats()}
+
+function loop(){
+  if(!running)return;
+  var k=+$('speed').value;
+  for(var s=0;s<k&&!done;s++)step();
+  render();
+  if(running)requestAnimationFrame(loop);
+}
+
+$('start').onclick=function(){
+  if(done)restart();
+  running=!running;$('start').textContent=running?'Pause':'Resume';
+  if(running)loop();else render();
+};
+$('step').onclick=function(){if(done)return;running=false;$('start').textContent='Resume';step();render()};
+$('reset').onclick=restart;
+$('newc').onclick=makeCities;
+$('n').oninput=function(){$('nv').textContent=this.value;makeCities()};
+$('alpha').oninput=function(){alpha=+this.value;$('av').textContent=alpha.toFixed(4)};
+$('speed').oninput=function(){$('sv').textContent=this.value};
+window.addEventListener('resize',render);
+makeCities();
+})();
+</script>
+</body>
+</html>
